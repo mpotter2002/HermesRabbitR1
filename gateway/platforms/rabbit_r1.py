@@ -477,6 +477,13 @@ class RabbitR1Adapter(BasePlatformAdapter):
 
     async def _start_tunnel(self) -> Optional[str]:
         """Start the configured tunnel and return the public wss:// URL."""
+        # Allow hardcoding the public URL via env var — useful when running
+        # as a systemd service where subprocess tunnel detection may fail.
+        explicit_url = os.getenv("RABBIT_R1_PUBLIC_URL")
+        if explicit_url:
+            logger.info(f"Rabbit R1: using explicit public URL: {explicit_url}")
+            return explicit_url
+
         if self._tunnel_mode == "none":
             return None
 
