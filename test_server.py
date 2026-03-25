@@ -174,10 +174,14 @@ async def handle_connection(ws, path=""):
 
 
 async def main():
-    ip = get_lan_ip()
-    print_qr(ip, PORT, TOKEN)
+    # Support tunnel hostnames via env vars
+    host = os.getenv("RABBIT_R1_HOST", get_lan_ip())
+    public_port = int(os.getenv("RABBIT_R1_PUBLIC_PORT", str(PORT)))
+    protocol = os.getenv("RABBIT_R1_PROTO", "ws")
 
-    print(f"Waiting for R1 connection on ws://{ip}:{PORT} ...")
+    print_qr(host, public_port, TOKEN, protocol)
+
+    print(f"Waiting for R1 connection on {protocol}://{host}:{public_port} ...")
     print("(Ctrl+C to stop)\n")
 
     async with websockets.serve(handle_connection, "0.0.0.0", PORT):

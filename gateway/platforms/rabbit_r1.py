@@ -6,8 +6,8 @@ device can talk to Hermes AI (full memory, skills, crons) from anywhere —
 not just home WiFi.
 
 Unlike the official OpenClaw setup (LAN-only), this adapter runs on a VM
-with a tunnel (Tailscale Funnel by default) so the R1 works from any
-network: home, cellular, travelling.
+with a tunnel (Tailscale Funnel or Cloudflare Tunnel) so the R1 works from
+any network: home, cellular, travelling.
 
 Architecture:
     R1 (anywhere with internet)
@@ -22,16 +22,24 @@ Protocol reference:
     QR payload:  {"type":"clawdbot-gateway","version":1,"ips":[...],"port":18789,"token":"<hex32>","protocol":"ws"}
     Handshake:   connect.challenge → connect → node.pair.approved → connect.ok
     Chat:        chat.send (R1→server) / chat event (server→R1)
+
+Tunnel options:
+    RABBIT_R1_TUNNEL=tailscale   — Tailscale Funnel (default, no extra account)
+    RABBIT_R1_TUNNEL=cloudflare  — Cloudflare Tunnel (free account, stable URL)
+    RABBIT_R1_TUNNEL=none        — LAN only (home network)
 """
 
 import asyncio
 import json
 import logging
 import os
+import re
 import secrets
+import socket
 import subprocess
+import time
 import uuid
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +53,9 @@ except ImportError:
 
 try:
     import qrcode
-    import qrcode.image.svg
     QRCODE_AVAILABLE = True
 except ImportError:
     QRCODE_AVAILABLE = False
-
-import sys
-from pathlib import Path as _Path
-sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
@@ -249,6 +252,33 @@ class RabbitR1Adapter(BasePlatformAdapter):
         except Exception as e:
             logger.warning(f"Rabbit R1: send failed for {chat_id}: {e}")
             return SendResult(success=False, error=str(e))
+
+    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
+        """Return metadata about the chat (device) identified by *chat_id*."""
+        connected = chat_id in self._clients
+        return {
+            "name": "Rabbit R1",
+            "type": "dm",
+            "chat_id": chat_id,
+            "connected": connected,
+        }
+
+    def format_message(self, content: str) -> str:
+        """
+        Strip markdown formatting for the R1's small screen.
+        The R1 renders plain text — bold/italic/links just add noise.
+        """
+        # Remove markdown bold/italic
+        content = re.sub(r'\*{1,3}(.+?)\*{1,3}', r'\1', content)
+        content = re.sub(r'_{1,3}(.+?)_{1,3}', r'\1', content)
+        # Remove markdown links [text](url) → text (url)
+        content = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\1 (\2)', content)
+        # Remove markdown headers
+        content = re.sub(r'^#{1,6}\s+', '', content, flags=re.MULTILINE)
+        # Remove code block markers
+        content = re.sub(r'```\w*\n?', '', content)
+        content = re.sub(r'`([^`]+)`', r'\1', content)
+        return content.strip()
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Send a 'thinking' state to the R1 — shows a loading indicator."""
@@ -548,13 +578,11 @@ class RabbitR1Adapter(BasePlatformAdapter):
 
 def _now_ms() -> int:
     """Current time in milliseconds."""
-    import time
     return int(time.time() * 1000)
 
 
 def _get_lan_ip() -> str:
     """Best-effort LAN IP detection for the QR code fallback."""
-    import socket
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
