@@ -309,7 +309,7 @@ class RabbitR1Adapter(BasePlatformAdapter):
     # WebSocket connection handling
     # ------------------------------------------------------------------
 
-    async def _handle_connection(self, ws: WebSocketServerProtocol, path: str) -> None:
+    async def _handle_connection(self, ws, path: str = "/") -> None:
         """Handle a new WebSocket connection from an R1 device."""
         remote = f"{ws.remote_address[0]}:{ws.remote_address[1]}"
         logger.debug(f"Rabbit R1: new connection from {remote}")
