@@ -4,17 +4,17 @@ A native Rabbit R1 platform adapter for [NousResearch/hermes-agent](https://gith
 
 **Tested and working on real R1 hardware** via both Tailscale Funnel and Cloudflare Tunnel.
 
-## Why not OpenClaw?
+## The problem
 
-OpenClaw only works on your home WiFi. Their install script even warns:
+The Rabbit R1's current connection setup (used by OpenClaw) is designed for local/LAN use only — everyone has to be on the same network. The install script even warns:
 
 > *"Do not run on cloud instances where your IP is publicly accessible."*
 
-Walk out your front door onto cellular — your R1 stops working. This adapter fixes that.
+Walk out your front door onto cellular — your R1 stops working. This adapter fixes that by adding a secure tunnel so your R1 works from anywhere.
 
-| | OpenClaw | This adapter |
+| | Current R1 setup (LAN) | This adapter |
 |---|---------|-------------|
-| Home WiFi | Yes | Yes |
+| Home WiFi (same network) | Yes | Yes |
 | Coffee shop WiFi | No | **Yes** |
 | Cellular / mobile data | No | **Yes** |
 | Travelling | No | **Yes** |
@@ -172,9 +172,53 @@ Replace `YOUR_HOST` and `YOUR_TOKEN` with your actual values from the gateway lo
 |--------|---------------|-----------|-------|
 | **Tailscale Funnel** (recommended) | No | Stable URL, survives reboots | `tailscale funnel --bg 18789` |
 | **Cloudflare Tunnel** | Free account | Stable URL | Install `cloudflared` |
-| `none` | N/A | LAN only (home WiFi) | Nothing |
+| `none` | N/A | LAN only (same network) | Nothing |
 
 Both tunnels have been tested and confirmed working on real R1 hardware.
+
+### Keeping the tunnel running (important)
+
+The tunnel must stay running for your R1 to connect. Use `--bg` to run it as a persistent background process that survives terminal closes and reboots:
+
+```bash
+# One-time setup (Tailscale)
+sudo tailscale set --operator=$USER
+tailscale funnel --bg 18789
+```
+
+This saves the funnel config — it will automatically restart when Tailscale restarts (including after reboots).
+
+To verify the tunnel is running:
+
+```bash
+tailscale funnel status
+```
+
+If you want extra reliability, you can create a systemd service that monitors and restarts the tunnel:
+
+```bash
+# Create the service file
+cat > ~/.config/systemd/user/tailscale-funnel.service << 'EOF'
+[Unit]
+Description=Tailscale Funnel for Rabbit R1
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/tailscale funnel 18789
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+
+# Enable and start
+systemctl --user daemon-reload
+systemctl --user enable tailscale-funnel
+systemctl --user start tailscale-funnel
+```
+
+For **Cloudflare Tunnel**, a similar systemd service is recommended since `cloudflared` runs as a foreground process. See the [Cloudflare docs on running as a service](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/configure-tunnels/local-management/as-a-service/).
 
 ## Security
 
