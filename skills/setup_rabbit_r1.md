@@ -28,11 +28,30 @@ Connect a Rabbit R1 device to this Hermes agent so it can be used as a platform 
    /path/to/hermes-agent/venv/bin/python -m pip install websockets qrcode
    ```
 
-6. **Set up the tunnel** (for remote/VM access):
+6. **Set up the tunnel** (so the R1 works from anywhere, not just home WiFi):
    - Check if Tailscale is installed: `which tailscale`
-   - If installed: `sudo tailscale set --operator=$USER && tailscale funnel --bg 18789`
-   - If not installed: tell the user to install Tailscale first, or use Cloudflare Tunnel as an alternative
-   - Get the public URL: `tailscale funnel status`
+   - **If Tailscale is installed:**
+     ```
+     sudo tailscale set --operator=$USER
+     tailscale funnel --bg 18789
+     tailscale funnel status
+     ```
+   - **If Tailscale is NOT installed** (Linux/VM):
+     ```
+     curl -fsSL https://tailscale.com/install.sh | sh
+     sudo tailscale up
+     sudo tailscale set --operator=$USER
+     tailscale funnel --bg 18789
+     tailscale funnel status
+     ```
+     After `tailscale up` the user may need to visit a URL in their browser to authenticate — show them the URL and ask them to confirm when done.
+   - **If Tailscale is NOT installed** (Mac):
+     Tell the user to install Tailscale from tailscale.com/download, sign in, then come back. Once installed, run `tailscale funnel --bg 18789`.
+   - **Cloudflare Tunnel alternative** (if user prefers or Tailscale fails):
+     ```
+     cloudflared tunnel --url http://localhost:18789
+     ```
+     Parse the trycloudflare.com URL from the output and use that as the public URL.
 
 7. **Configure environment variables** — add to ~/.hermes/.env:
    ```
