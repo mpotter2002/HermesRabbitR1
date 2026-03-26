@@ -152,6 +152,7 @@ class RabbitR1Adapter(BasePlatformAdapter):
         RABBIT_R1_TOKEN   — hex32 auth token (auto-generated if not set)
         RABBIT_R1_PORT    — WebSocket server port (default: 18789)
         RABBIT_R1_TUNNEL  — "tailscale" | "cloudflare" | "none" (default: "tailscale")
+        RABBIT_R1_KEEPALIVE_INTERVAL — seconds between server→R1 heartbeats (default: 300 = 5 min)
     """
 
     # R1 has no hard message length limit but keep responses readable on the small screen
@@ -174,6 +175,14 @@ class RabbitR1Adapter(BasePlatformAdapter):
 
         # device_id → websocket mapping for connected R1 devices
         self._clients: Dict[str, WebSocketServerProtocol] = {}
+
+        # Server→R1 keepalive: prevents the R1 from timing out the session
+        # due to inactivity. Default 5 minutes keeps us well under the R1's
+        # ~30-minute inactivity threshold.
+        self._keepalive_interval: int = int(
+            os.getenv("RABBIT_R1_KEEPALIVE_INTERVAL", "300")
+        )
+        self._keepalive_tasks: Dict[str, asyncio.Task] = {}
 
         # Rate limiting: track failed auth attempts per IP
         self._auth_failures: Dict[str, List[float]] = {}
@@ -213,6 +222,9 @@ class RabbitR1Adapter(BasePlatformAdapter):
 
     async def disconnect(self) -> None:
         """Stop the WebSocket server."""
+        # Cancel all keepalive tasks
+        for device_id in list(self._keepalive_tasks):
+            self._stop_keepalive(device_id)
         if self._server:
             self._server.close()
             await self._server.wait_closed()
@@ -379,6 +391,8 @@ class RabbitR1Adapter(BasePlatformAdapter):
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
+            if device_id:
+                self._stop_keepalive(device_id)
             if device_id and device_id in self._clients:
                 del self._clients[device_id]
                 logger.info(f"Rabbit R1: device disconnected: {device_id}")
@@ -444,6 +458,7 @@ class RabbitR1Adapter(BasePlatformAdapter):
 
         # Auth passed — register the device
         self._clients[device_id] = ws
+        self._start_keepalive(device_id, ws)
         logger.info(f"Rabbit R1: device paired: {device_id} from {remote}")
 
         await self._send(ws, {
@@ -497,6 +512,39 @@ class RabbitR1Adapter(BasePlatformAdapter):
         )
 
         await self.handle_message(event)
+
+    # ------------------------------------------------------------------
+    # Server→R1 keepalive
+    # ------------------------------------------------------------------
+
+    def _start_keepalive(self, device_id: str, ws: WebSocketServerProtocol) -> None:
+        """Start a background task that sends periodic heartbeats to the R1."""
+        self._stop_keepalive(device_id)  # cancel any existing task
+        self._keepalive_tasks[device_id] = asyncio.ensure_future(
+            self._keepalive_loop(device_id, ws)
+        )
+
+    def _stop_keepalive(self, device_id: str) -> None:
+        """Cancel the keepalive task for a device."""
+        task = self._keepalive_tasks.pop(device_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _keepalive_loop(self, device_id: str, ws: WebSocketServerProtocol) -> None:
+        """Send system-presence heartbeats every *_keepalive_interval* seconds."""
+        try:
+            while True:
+                await asyncio.sleep(self._keepalive_interval)
+                await self._send(ws, {
+                    "type": "event",
+                    "event": "system-presence",
+                    "payload": {"ts": _now_ms(), "deviceId": device_id},
+                })
+                logger.debug(f"Rabbit R1: keepalive sent to {device_id}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Rabbit R1: keepalive stopped for {device_id}: {e}")
 
     # ------------------------------------------------------------------
     # Tunnel helpers
