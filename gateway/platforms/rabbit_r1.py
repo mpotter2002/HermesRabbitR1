@@ -521,7 +521,8 @@ class RabbitR1Adapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
 
     async def _print_pairing_info(self) -> None:
-        """Print pairing instructions and QR code to the console."""
+        """Print pairing instructions, save QR code as PNG, and optionally
+        deliver the QR code to another connected platform (e.g. Telegram)."""
         # Build the QR payload
         if self._public_url:
             # Strip wss:// scheme — the payload uses host + port separately
@@ -540,6 +541,19 @@ class RabbitR1Adapter(BasePlatformAdapter):
             "protocol": "wss" if self._public_url else "ws",
         })
 
+        # Save QR code as PNG for easy access (avoids terminal truncation)
+        qr_png_path = None
+        if QRCODE_AVAILABLE:
+            try:
+                qr_png_path = os.path.expanduser("~/.hermes/rabbit_r1_qr.png")
+                os.makedirs(os.path.dirname(qr_png_path), exist_ok=True)
+                qr_img = qrcode.make(qr_data)
+                qr_img.save(qr_png_path)
+                logger.info(f"Rabbit R1: QR code saved to {qr_png_path}")
+            except Exception as e:
+                logger.warning(f"Rabbit R1: failed to save QR PNG: {e}")
+                qr_png_path = None
+
         print("\n" + "=" * 60)
         print("  Rabbit R1 — Hermes Gateway")
         print("=" * 60)
@@ -550,8 +564,11 @@ class RabbitR1Adapter(BasePlatformAdapter):
             print(f"  Local URL  : ws://{host}:{port}")
             print(f"  Works from : home network only")
         print(f"  Token      : {self._token}")
+        if qr_png_path:
+            print(f"  QR image   : {qr_png_path}")
         print()
         print("  Scan the QR code below with your Rabbit R1:")
+        print("  (If the QR code is cut off, open the PNG file above instead)")
         print()
 
         if QRCODE_AVAILABLE:
