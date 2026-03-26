@@ -4,6 +4,16 @@ A native Rabbit R1 platform adapter for [NousResearch/hermes-agent](https://gith
 
 **Tested and working on real R1 hardware** via both Tailscale Funnel and Cloudflare Tunnel.
 
+## Already have Hermes set up?
+
+Send this to your agent:
+
+```
+Set up the Rabbit R1 adapter for me: https://github.com/mpotter2002/HermesRabbitR1
+```
+
+Your agent will read the install instructions from this repo and walk you through the full setup.
+
 ## The problem
 
 The Rabbit R1's current connection setup (used by OpenClaw) is designed for local/LAN use only — everyone has to be on the same network. The install script even warns:
