@@ -175,6 +175,11 @@ class RabbitR1Adapter(BasePlatformAdapter):
         # device_id → websocket mapping for connected R1 devices
         self._clients: Dict[str, WebSocketServerProtocol] = {}
 
+        # Rate limiting: track failed auth attempts per IP
+        self._auth_failures: Dict[str, List[float]] = {}
+        self._max_auth_failures = 5      # max failures per window
+        self._auth_window_secs = 300.0   # 5-minute window
+
     # ------------------------------------------------------------------
     # BasePlatformAdapter — required methods
     # ------------------------------------------------------------------
@@ -389,6 +394,25 @@ class RabbitR1Adapter(BasePlatformAdapter):
         Returns the device_id on success, None on failure.
         """
         msg_id = msg.get("id")
+
+        # Rate-limit: reject if too many recent failures from this IP
+        ip = remote.rsplit(":", 1)[0]
+        now = time.time()
+        failures = self._auth_failures.get(ip, [])
+        # Prune old entries
+        failures = [t for t in failures if now - t < self._auth_window_secs]
+        self._auth_failures[ip] = failures
+        if len(failures) >= self._max_auth_failures:
+            logger.warning(f"Rabbit R1: rate-limited {remote} ({len(failures)} failures in {self._auth_window_secs}s)")
+            await self._send(ws, {
+                "type": "res",
+                "id": msg_id,
+                "ok": False,
+                "error": {"code": 429, "message": "Too many failed attempts"},
+            })
+            await ws.close()
+            return None
+
         params = msg.get("params", {})
 
         # Extract token — R1 sends it at params.auth.token
@@ -404,8 +428,11 @@ class RabbitR1Adapter(BasePlatformAdapter):
             or f"r1-{remote}"
         )
 
-        if client_token != self._token:
+        if not secrets.compare_digest(
+            (client_token or "").encode(), self._token.encode()
+        ):
             logger.warning(f"Rabbit R1: auth failed from {remote} (bad token)")
+            self._auth_failures.setdefault(ip, []).append(now)
             await self._send(ws, {
                 "type": "res",
                 "id": msg_id,
@@ -563,7 +590,8 @@ class RabbitR1Adapter(BasePlatformAdapter):
         else:
             print(f"  Local URL  : ws://{host}:{port}")
             print(f"  Works from : home network only")
-        print(f"  Token      : {self._token}")
+        masked = self._token[:6] + "…" + self._token[-4:]
+        print(f"  Token      : {masked}  (full token in RABBIT_R1_TOKEN env var)")
         if qr_png_path:
             print(f"  QR image   : {qr_png_path}")
         print()
